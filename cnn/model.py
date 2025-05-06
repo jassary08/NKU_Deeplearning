@@ -22,9 +22,25 @@ class Cnn(nn.Module):
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
         return x
+class SqueezeExcitation(nn.Module):
+    def __init__(self, in_channels, reduction=16):
+        super().__init__()
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(in_channels, in_channels // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(in_channels // reduction, in_channels, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        y = self.pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1, 1)
+        return x * y  # 通道加权
 
 class Bottleneck(nn.Module):
-    def __init__(self,in_channels,bottleneck_channels,out_channels,stride):
+    def __init__(self,in_channels,bottleneck_channels,out_channels,stride,se):
         super().__init__()
         # conv1降低维度
         self.conv1 = nn.Conv2d(in_channels=in_channels,out_channels=bottleneck_channels,kernel_size=1,stride=stride,bias=False)
@@ -39,6 +55,8 @@ class Bottleneck(nn.Module):
         self.bn2 = nn.BatchNorm2d(bottleneck_channels)
         self.bn3 = nn.BatchNorm2d(out_channels)
 
+        self.se = SqueezeExcitation(out_channels)
+        self.is_se = se
         self.stride = stride
 
         if self.stride != 1 or in_channels != out_channels:
@@ -64,6 +82,9 @@ class Bottleneck(nn.Module):
         output = self.bn3(output)
         output = self.relu(output)
 
+        if self.is_se:
+            output = self.se(output)
+
         output = output + residual
         output = self.relu(output)
 
@@ -71,7 +92,7 @@ class Bottleneck(nn.Module):
 
 
 class ResNet(nn.Module):
-    def __init__(self,img_channels,nums_blocks,nums_channels,first_kernel_size,num_labels):
+    def __init__(self,img_channels,nums_blocks,nums_channels,first_kernel_size,num_labels,is_se = False):
         super().__init__()
         self.block = Bottleneck
 
@@ -93,10 +114,10 @@ class ResNet(nn.Module):
 
     def _make_layer(self, num_blocks, in_channels, out_channels, stride):
         layers = []
-        layers.append(self.block(in_channels, in_channels // 4, out_channels, stride))
+        layers.append(self.block(in_channels, in_channels // 4, out_channels, stride, self.is_se))
 
         for _ in range(1, num_blocks):
-            layers.append(self.block(out_channels, out_channels // 4, out_channels, stride=1))
+            layers.append(self.block(out_channels, out_channels // 4, out_channels, stride=1, se = self.is_se))
 
         return nn.Sequential(*layers)
 
