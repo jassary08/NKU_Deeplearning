@@ -22,6 +22,7 @@ class Cnn(nn.Module):
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
         return x
+
 class SqueezeExcitation(nn.Module):
     def __init__(self, in_channels, reduction=16):
         super().__init__()
@@ -39,105 +40,94 @@ class SqueezeExcitation(nn.Module):
         y = self.fc(y).view(b, c, 1, 1)
         return x * y  # 通道加权
 
+# Bottleneck block
 class Bottleneck(nn.Module):
-    def __init__(self,in_channels,bottleneck_channels,out_channels,stride,se):
+    def __init__(self, in_channels, mid_channels, out_channels, stride=1, use_se=False):
         super().__init__()
-        # conv1降低维度
-        self.conv1 = nn.Conv2d(in_channels=in_channels,out_channels=bottleneck_channels,kernel_size=1,stride=stride,bias=False)
-        # conv2提取特征
-        self.conv2 = nn.Conv2d(in_channels=bottleneck_channels,out_channels=bottleneck_channels,kernel_size=3,stride=1,padding=1,bias=False)
-        # conv3增加维度
-        self.conv3 = nn.Conv2d(in_channels=bottleneck_channels,out_channels=out_channels,kernel_size=1,stride=1,bias=False)
-        # relu激活函数
-        self.relu = nn.ReLU()
-        # Batch Norm Layer
-        self.bn1 = nn.BatchNorm2d(bottleneck_channels)
-        self.bn2 = nn.BatchNorm2d(bottleneck_channels)
+        self.conv1 = nn.Conv2d(in_channels, mid_channels, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(mid_channels)
+        self.conv2 = nn.Conv2d(mid_channels, mid_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(mid_channels)
+        self.conv3 = nn.Conv2d(mid_channels, out_channels, kernel_size=1, bias=False)
         self.bn3 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
 
-        self.se = SqueezeExcitation(out_channels)
-        self.is_se = se
-        self.stride = stride
+        self.se = SqueezeExcitation(out_channels) if use_se else nn.Identity()
 
-        if self.stride != 1 or in_channels != out_channels:
+        # Shortcut connection
+        if stride != 1 or in_channels != out_channels:
             self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels,out_channels,1,stride ,bias=False),
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
                 nn.BatchNorm2d(out_channels)
             )
         else:
             self.shortcut = nn.Identity()
 
-    def forward(self,x):
-        residual = self.shortcut(x)
+    def forward(self, x):
+        identity = self.shortcut(x)
 
-        output = self.conv1(x)
-        output = self.bn1(output)
-        output = self.relu(output)
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
 
-        output = self.conv2(output)
-        output = self.bn2(output)
-        output = self.relu(output)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu(out)
 
-        output = self.conv3(output)
-        output = self.bn3(output)
-        output = self.relu(output)
+        out = self.conv3(out)
+        out = self.bn3(out)
 
-        if self.is_se:
-            output = self.se(output)
+        out = self.se(out)
 
-        output = output + residual
-        output = self.relu(output)
+        out += identity
+        out = self.relu(out)
+        return out
 
-        return output
-
-
+# ResNet 主体
 class ResNet(nn.Module):
-    def __init__(self,img_channels,nums_blocks,nums_channels,first_kernel_size,num_labels,is_se = False):
+    def __init__(self, img_channels, nums_blocks, nums_channels, first_kernel_size, num_labels, is_se=False):
         super().__init__()
+        self.is_se = is_se
         self.block = Bottleneck
 
-        #原始输入600*600*3->300*300*3
-        self.conv1 = nn.Conv2d(img_channels,nums_channels[0], first_kernel_size, 2, first_kernel_size, bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU()
+        # 输入卷积层
+        padding = first_kernel_size // 2
+        self.conv1 = nn.Conv2d(img_channels, nums_channels[0], first_kernel_size, stride=2, padding=padding, bias=False)
+        self.bn1 = nn.BatchNorm2d(nums_channels[0])
+        self.relu = nn.ReLU(inplace=True)
+        self.max_pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
-        self.max_pool = nn.MaxPool2d(3,2,0)
-
+        # 残差层
         self.layer1 = self._make_layer(nums_blocks[0], nums_channels[0], nums_channels[1], stride=1)
         self.layer2 = self._make_layer(nums_blocks[1], nums_channels[1], nums_channels[2], stride=2)
         self.layer3 = self._make_layer(nums_blocks[2], nums_channels[2], nums_channels[3], stride=2)
         self.layer4 = self._make_layer(nums_blocks[3], nums_channels[3], nums_channels[4], stride=2)
 
+        # 分类头
         self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-        self.cls_head = nn.Linear(nums_channels[4],num_labels)
-
+        self.cls_head = nn.Linear(nums_channels[4], num_labels)
 
     def _make_layer(self, num_blocks, in_channels, out_channels, stride):
-        layers = []
-        layers.append(self.block(in_channels, in_channels // 4, out_channels, stride, self.is_se))
-
+        layers = [self.block(in_channels, in_channels // 4, out_channels, stride, self.is_se)]
         for _ in range(1, num_blocks):
-            layers.append(self.block(out_channels, out_channels // 4, out_channels, stride=1, se = self.is_se))
-
+            layers.append(self.block(out_channels, out_channels // 4, out_channels, stride=1, use_se=self.is_se))
         return nn.Sequential(*layers)
 
-    def forward(self,x):
-        output = self.conv1(x)
-        output = self.bn1(output)
-        output = self.relu(output)
+    def forward(self, x):
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.max_pool(out)
 
-        output = self.max_pool(output)
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
 
-        output = self.layer1(output)
-        output = self.layer2(output)
-        output = self.layer3(output)
-        output = self.layer4(output)
-
-        output = self.avg_pool(output)
-        output = output.view(output.size(0),-1)
-        output = self.cls_head(output)
-
-        return output
+        out = self.avg_pool(out)
+        out = torch.flatten(out, 1)
+        out = self.cls_head(out)
+        return out
 
 class DenseLayer(nn.Module):
     def __init__(self, nChannels, growthRate):
