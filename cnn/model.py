@@ -92,7 +92,7 @@ class ResNet(nn.Module):
 
         # 输入卷积层
         padding = first_kernel_size // 2
-        self.conv1 = nn.Conv2d(img_channels, nums_channels[0], first_kernel_size, stride=2, padding=padding, bias=False)
+        self.conv1 = nn.Conv2d(img_channels, nums_channels[0], first_kernel_size, stride=1, padding=padding, bias=False)
         self.bn1 = nn.BatchNorm2d(nums_channels[0])
         self.relu = nn.ReLU(inplace=True)
         self.max_pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -117,7 +117,7 @@ class ResNet(nn.Module):
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
-        out = self.max_pool(out)
+        # out = self.max_pool(out)
 
         out = self.layer1(out)
         out = self.layer2(out)
