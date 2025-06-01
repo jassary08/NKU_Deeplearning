@@ -29,7 +29,7 @@ def main():
     criterion = nn.CrossEntropyLoss()
 
     # TensorBoard writer
-    writer = SummaryWriter(log_dir='runs/experiment_cnn')
+    writer = SummaryWriter(log_dir='runs/cnn')
 
     # 训练参数
     num_epochs = 20

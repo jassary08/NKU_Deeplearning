@@ -42,7 +42,7 @@ class SqueezeExcitation(nn.Module):
 
 # Bottleneck block
 class Bottleneck(nn.Module):
-    def __init__(self, in_channels, mid_channels, out_channels, stride=1, use_se=False):
+    def __init__(self, in_channels, mid_channels, out_channels, stride=1, use_se=True):
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, mid_channels, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm2d(mid_channels)
