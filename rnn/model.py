@@ -21,9 +21,9 @@ class rnn(nn.Module):
     def initHidden(self):
         return torch.zeros(1, self.hidden_size)
 
-class LSTMCell(nn.Module):
+class LSTM(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
-        super(LSTMCell, self).__init__()
+        super(LSTM, self).__init__()
 
         self.hidden_size = hidden_size
 
