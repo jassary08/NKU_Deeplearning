@@ -8,7 +8,7 @@ from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 import multiprocessing
 
-from model import DenseNet  # 你的自定义 DenseNet
+from model import DenseNet121  # 你的自定义 DenseNet
 from dataset import get_dataset
 
 
@@ -16,13 +16,8 @@ def main():
     # 获取数据集与类别数
     train_loader, val_loader, classes = get_dataset()
 
-    # 模型参数（使用你的 DenseNet）
-    model = DenseNet(
-        growthRate=12,
-        depth=40,
-        reduction=0.5,
-        nClasses=len(classes)
-    )
+    # 模型参数
+    model = DenseNet121(num_classes=10)
 
     # 设备
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -37,7 +32,7 @@ def main():
 
     # 训练参数
     num_epochs = 50
-    save_path = '/checkpoint/checkpoint_densenet_cifar10.pth'
+    save_path = 'checkpoints/checkpoint_densenet_cifar10.pth'
 
     # 日志记录
     train_losses = []

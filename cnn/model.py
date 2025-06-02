@@ -129,80 +129,91 @@ class ResNet(nn.Module):
         out = self.cls_head(out)
         return out
 
-class DenseLayer(nn.Module):
-    def __init__(self, nChannels, growthRate):
-        super(DenseLayer, self).__init__()
-        self.bn1 = nn.BatchNorm2d(nChannels)
-        self.conv1 = nn.Conv2d(nChannels, growthRate, kernel_size=3,
-                               padding=1, bias=False)
+class DenseBottleneck(nn.Module):
+    def __init__(self, in_channels, growth_rate, bn_size=4):
+        super().__init__()
+        inter_channels = bn_size * growth_rate
+        self.bn1 = nn.BatchNorm2d(in_channels)
+        self.conv1 = nn.Conv2d(in_channels, inter_channels, kernel_size=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(inter_channels)
+        self.conv2 = nn.Conv2d(inter_channels, growth_rate, kernel_size=3, padding=1, bias=False)
+        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        out = self.conv1(F.relu(self.bn1(x)))
-        out = torch.cat((x, out), 1)
+        out = self.conv1(self.relu(self.bn1(x)))
+        out = self.conv2(self.relu(self.bn2(out)))
+        out = torch.cat([x, out], 1)
         return out
+
 
 class Transition(nn.Module):
-    def __init__(self, nChannels, nOutChannels):
-        super(Transition, self).__init__()
-        self.bn1 = nn.BatchNorm2d(nChannels)
-        self.conv1 = nn.Conv2d(nChannels, nOutChannels, kernel_size=1,
-                               bias=False)
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.bn = nn.BatchNorm2d(in_channels)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
+        self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
 
     def forward(self, x):
-        out = self.conv1(F.relu(self.bn1(x)))
-        out = F.avg_pool2d(out, 2)
+        out = self.conv(F.relu(self.bn(x)))
+        out = self.pool(out)
         return out
 
 
-class DenseNet(nn.Module):
-    def __init__(self, growthRate, depth, reduction, nClasses):
-        super(DenseNet, self).__init__()
-
-        nDenseBlocks = (depth-4) // 3
-
-        nChannels = 2*growthRate
-        self.conv1 = nn.Conv2d(3, nChannels, kernel_size=3, padding=1,
-                               bias=False)
-        self.dense1 = self._make_dense(nChannels, growthRate, nDenseBlocks)
-        nChannels += nDenseBlocks*growthRate
-        nOutChannels = int(math.floor(nChannels*reduction))
-        self.trans1 = Transition(nChannels, nOutChannels)
-
-        nChannels = nOutChannels
-        self.dense2 = self._make_dense(nChannels, growthRate, nDenseBlocks)
-        nChannels += nDenseBlocks*growthRate
-        nOutChannels = int(math.floor(nChannels*reduction))
-        self.trans2 = Transition(nChannels, nOutChannels)
-
-        nChannels = nOutChannels
-        self.dense3 = self._make_dense(nChannels, growthRate, nDenseBlocks)
-        nChannels += nDenseBlocks*growthRate
-
-        self.bn1 = nn.BatchNorm2d(nChannels)
-        self.fc = nn.Linear(nChannels, nClasses)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2. / n))
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-            elif isinstance(m, nn.Linear):
-                m.bias.data.zero_()
-
-    def _make_dense(self, nChannels, growthRate, nDenseBlocks):
+class DenseBlock(nn.Module):
+    def __init__(self, num_layers, in_channels, growth_rate, bn_size=4):
+        super().__init__()
         layers = []
-        for i in range(int(nDenseBlocks)):
-            layers.append(DenseLayer(nChannels, growthRate))
-            nChannels += growthRate
-        return nn.Sequential(*layers)
+        for i in range(num_layers):
+            layers.append(DenseBottleneck(in_channels + i * growth_rate, growth_rate, bn_size))
+        self.block = nn.Sequential(*layers)
 
     def forward(self, x):
-        out = self.conv1(x)
-        out = self.trans1(self.dense1(out))
-        out = self.trans2(self.dense2(out))
-        out = self.dense3(out)
-        out = torch.squeeze(F.avg_pool2d(F.relu(self.bn1(out)), 8))
-        out = F.log_softmax(self.fc(out))
+        return self.block(x)
+
+
+class DenseNet121(nn.Module):
+    def __init__(self, num_classes=10, growth_rate=32):
+        super().__init__()
+        num_init_features = 64
+        block_layers = [6, 12, 24, 16]
+        bn_size = 4
+        reduction = 0.5
+
+        # For CIFAR: use smaller first conv
+        self.features = nn.Sequential(
+            nn.Conv2d(3, num_init_features, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(num_init_features),
+            nn.ReLU(inplace=True),
+        )
+
+        num_features = num_init_features
+        for i, num_layers in enumerate(block_layers):
+            block = DenseBlock(num_layers, num_features, growth_rate, bn_size)
+            self.features.add_module(f'denseblock{i + 1}', block)
+            num_features += num_layers * growth_rate
+            if i != len(block_layers) - 1:
+                out_features = int(num_features * reduction)
+                trans = Transition(num_features, out_features)
+                self.features.add_module(f'transition{i + 1}', trans)
+                num_features = out_features
+
+        self.features.add_module('norm5', nn.BatchNorm2d(num_features))
+        self.classifier = nn.Linear(num_features, num_classes)
+
+        # Init
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        features = self.features(x)
+        out = F.relu(features, inplace=True)
+        out = F.adaptive_avg_pool2d(out, (1, 1))
+        out = torch.flatten(out, 1)
+        out = self.classifier(out)
         return out
