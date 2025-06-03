@@ -35,7 +35,7 @@ def main():
     criterion = nn.CrossEntropyLoss()
 
     # TensorBoard writer
-    writer = SummaryWriter(log_dir='runs/resnet50')
+    writer = SummaryWriter(log_dir='runs/resnet50_se')
 
     # 训练参数
     num_epochs = 50

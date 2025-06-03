@@ -1,52 +1,40 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torchvision
-import torchvision.transforms as transforms
-import matplotlib.pyplot as plt
+from torch.cuda.amp import autocast, GradScaler
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 import multiprocessing
+import os
 
-from model import ResNet  # 你的自定义模型
+from model import Res2Net, Bottle2neck  # 直接导入你写好的 Res2Net
 from dataset import get_dataset
-
 
 def main():
     # 获取数据集与类别数
-    train_loader, val_loader, classes = get_dataset()
+    train_loader, val_loader, classes = get_dataset(batch_size=2048, num_workers=4)  # 大 batch
 
-    # 模型参数（使用你的自定义 ResNet）
-    model = ResNet(
-        img_channels=3,
-        nums_blocks=[3, 4, 6, 3],
-        nums_channels=[64, 128, 256, 512, 1024],
-        first_kernel_size=3,       # 改小核 (3x3) 适配 CIFAR
-        num_labels=10,
-        is_se=False
-    )
+    # 模型参数（用你的 Res2Net）
+    model = Res2Net(Bottle2neck,[3, 4, 6, 3],
+                    baseWidth=16,
+                    scale=2,
+                    num_classes=10)
 
-    # 设备
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs")
+        model = nn.DataParallel(model)
     model = model.to(device)
 
-    # 优化器和损失函数
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
     criterion = nn.CrossEntropyLoss()
+    scaler = GradScaler()
 
-    # TensorBoard writer
-    writer = SummaryWriter(log_dir='runs/resnet50')
+    writer = SummaryWriter(log_dir='runs/res2net50')
+    num_epochs = 100
+    save_path = 'checkpoints/checkpoint_res2net50_best.pth'
+    best_acc = 0.0
 
-    # 训练参数
-    num_epochs = 50
-    save_path = 'checkpoints/checkpoint_resnet50_cifar10.pth'
-
-    # 日志记录
-    train_losses = []
-    val_losses = []
-    val_accuracies = []
-
-    # 验证函数
     def validate(model, val_loader, criterion):
         model.eval()
         total = 0
@@ -55,8 +43,9 @@ def main():
         with torch.no_grad():
             for images, labels in tqdm(val_loader, desc='Validating', leave=False):
                 images, labels = images.to(device), labels.to(device)
-                outputs = model(images)
-                loss = criterion(outputs, labels)
+                with autocast():
+                    outputs = model(images)
+                    loss = criterion(outputs, labels)
                 val_loss += loss.item() * images.size(0)
                 _, predicted = torch.max(outputs, 1)
                 total += labels.size(0)
@@ -65,47 +54,50 @@ def main():
         accuracy = correct / total
         return avg_loss, accuracy
 
-    # 训练 + 验证
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
+        correct = 0
+        total = 0
 
         train_loop = tqdm(train_loader, desc=f'Epoch [{epoch+1}/{num_epochs}]', leave=False)
-
         for images, labels in train_loop:
             images, labels = images.to(device), labels.to(device)
 
             optimizer.zero_grad()
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+            with autocast():
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             running_loss += loss.item() * images.size(0)
+            _, predicted = torch.max(outputs, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
             train_loop.set_postfix({'batch_loss': loss.item()})
 
         avg_train_loss = running_loss / len(train_loader.dataset)
-        train_losses.append(avg_train_loss)
+        train_acc = correct / total
 
-        # 验证阶段
         val_loss, val_accuracy = validate(model, val_loader, criterion)
-        val_losses.append(val_loss)
-        val_accuracies.append(val_accuracy)
-
-        # 写入 TensorBoard
         writer.add_scalar('Loss/Train', avg_train_loss, epoch + 1)
+        writer.add_scalar('Accuracy/Train', train_acc, epoch + 1)
         writer.add_scalar('Loss/Validation', val_loss, epoch + 1)
         writer.add_scalar('Accuracy/Validation', val_accuracy, epoch + 1)
 
-        print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss:.4f}, Val Acc: {val_accuracy:.4f}")
+        print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {avg_train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Loss: {val_loss:.4f}, Val Acc: {val_accuracy:.4f}")
 
-    # 保存模型
-    torch.save(model.state_dict(), save_path)
-    print(f"Model saved to {save_path}")
+        if val_accuracy > best_acc:
+            best_acc = val_accuracy
+            os.makedirs('checkpoints', exist_ok=True)
+            torch.save(model.state_dict(), save_path)
+            print(f"New best model saved! Acc={best_acc:.4f}")
 
-    # 关闭 TensorBoard writer
     writer.close()
-
+    print(f"Training finished. Best accuracy: {best_acc:.4f}")
 
 
 if __name__ == '__main__':
