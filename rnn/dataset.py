@@ -17,16 +17,28 @@ def unicodeToAscii(s):
     )
 
 def readLines(filename):
-    lines = open(filename, encoding='utf-8').read().strip().split('\n')
-    return [unicodeToAscii(line) for line in lines]
+    try:
+        content = open(filename, encoding='utf-8').read()
+    except Exception as e:
+        print(f"Failed to read {filename}: {e}")
+        return []
+    lines = content.strip().split('\n')
+    ascii_lines = [unicodeToAscii(line) for line in lines]
+    return ascii_lines
+
 
 def loadData(path):
     category_lines = {}
     all_categories = []
-    for filename in findFiles(path):
+    files = findFiles(path)
+    print(f"Found files: {files}")
+    for filename in files:
         category = os.path.splitext(os.path.basename(filename))[0]
+        print(f"Loading category: {category}")
+        lines = readLines(filename)
+        print(f"  Loaded {len(lines)} names")
         all_categories.append(category)
-        category_lines[category] = readLines(filename)
+        category_lines[category] = lines
     return category_lines, all_categories
 
 def letterToIndex(letter):

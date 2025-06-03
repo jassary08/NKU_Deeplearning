@@ -2,9 +2,9 @@ import time
 import math
 import torch
 
-from model import RNN
-from data import loadData, randomTrainingExample, lineToTensor, all_letters, n_letters
-from runner import train_step, evaluate, categoryFromOutput, plot_loss, plot_confusion
+from model import rnn
+from dataset import loadData, randomTrainingExample, lineToTensor, all_letters, n_letters
+from runner import train_step_rnn, evaluate_rnn, categoryFromOutput, plot_loss, plot_confusion
 
 # 参数
 learning_rate = 0.005
@@ -13,11 +13,11 @@ print_every = 5000
 plot_every = 1000
 
 # 数据
-category_lines, all_categories = loadData('../data/names/*.txt')
+category_lines, all_categories = loadData('./data/names/*.txt')
 n_categories = len(all_categories)
 
 # 模型
-rnn = RNN(n_letters, 128, n_categories)
+rnn = rnn(n_letters, 128, n_categories)
 criterion = torch.nn.NLLLoss()
 current_loss = 0
 all_losses = []
@@ -33,7 +33,7 @@ def timeSince(since):
 start = time.time()
 for iter in range(1, n_iters + 1):
     category, line, category_tensor, line_tensor = randomTrainingExample(category_lines, all_categories)
-    output, loss = train_step(category_tensor, line_tensor, rnn, criterion, learning_rate)
+    output, loss = train_step_rnn(category_tensor, line_tensor, rnn, criterion, learning_rate)
     current_loss += loss
 
     if iter % print_every == 0:
@@ -54,7 +54,7 @@ n_confusion = 10000
 
 for _ in range(n_confusion):
     category, line, category_tensor, line_tensor = randomTrainingExample(category_lines, all_categories)
-    output = evaluate(line_tensor, rnn)
+    output = evaluate_rnn(line_tensor, rnn)
     guess, guess_i = categoryFromOutput(output, all_categories)
     category_i = all_categories.index(category)
     confusion[category_i][guess_i] += 1

@@ -4,7 +4,7 @@ import torch
 import matplotlib.pyplot as plt
 
 from model import LSTM  # 这里导入你给出的 LSTM 类
-from data import loadData, randomTrainingExample, lineToTensor, all_letters, n_letters
+from dataset import loadData, randomTrainingExample, lineToTensor, all_letters, n_letters
 from runner import train_step_lstm, evaluate_lstm, categoryFromOutput, plot_loss, plot_confusion
 
 # 参数
@@ -14,7 +14,7 @@ print_every = 5000
 plot_every = 1000
 
 # 数据
-category_lines, all_categories = loadData('../data/names/*.txt')
+category_lines, all_categories = loadData('./data/names/*.txt')
 n_categories = len(all_categories)
 
 # 模型
