@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-
+from dataset import randomTrainingExample
 def train_step_rnn(category_tensor, line_tensor, rnn, criterion, learning_rate):
     hidden = rnn.initHidden()
     rnn.zero_grad()
@@ -57,6 +57,40 @@ def evaluate_lstm(line_tensor, lstm):
             output, hidden, cell = lstm(line_tensor[i], hidden, cell)
 
     return output
+
+
+def evaluate_accuracy_rnn(rnn_model, category_lines, all_categories, n_samples=1000):
+    correct = 0
+    with torch.no_grad():
+        for _ in range(n_samples):
+            category, line, _, line_tensor = randomTrainingExample(category_lines, all_categories)
+            output = evaluate_rnn(line_tensor, rnn_model)
+            guess, _ = categoryFromOutput(output, all_categories)
+            if guess == category:
+                correct += 1
+    return correct / n_samples
+
+def evaluate_accuracy_lstm(model, category_lines, all_categories, n_samples=1000):
+    correct = 0
+    with torch.no_grad():
+        for _ in range(n_samples):
+            category, line, _, line_tensor = randomTrainingExample(category_lines, all_categories)
+            output = evaluate_lstm(line_tensor, model)
+            guess, _ = categoryFromOutput(output, all_categories)
+            if guess == category:
+                correct += 1
+    return correct / n_samples
+
+
+def plot_accuracy(accuracies, step_interval=1000):
+    plt.figure()
+    steps = [i * step_interval for i in range(1, len(accuracies)+1)]
+    plt.plot(steps, accuracies)
+    plt.title("Validation Accuracy over Iterations")
+    plt.xlabel("Iterations")
+    plt.ylabel("Accuracy")
+    plt.grid(True)
+    plt.show()
 
 
 def plot_loss(all_losses):

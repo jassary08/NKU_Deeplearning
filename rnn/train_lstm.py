@@ -5,11 +5,11 @@ import matplotlib.pyplot as plt
 
 from model import LSTM  # 这里导入你给出的 LSTM 类
 from dataset import loadData, randomTrainingExample, lineToTensor, all_letters, n_letters
-from runner import train_step_lstm, evaluate_lstm, categoryFromOutput, plot_loss, plot_confusion
+from runner import train_step_lstm, evaluate_lstm, categoryFromOutput, plot_loss, plot_confusion,evaluate_accuracy_lstm,plot_accuracy
 
 # 参数
-learning_rate = 0.005
-n_iters = 100000
+learning_rate = 0.01
+n_iters = 300000
 print_every = 5000
 plot_every = 1000
 
@@ -31,6 +31,9 @@ def timeSince(since):
     return f'{m}m {s:.0f}s'
 
 # 训练循环
+accuracy_every = 1000  # 验证频率
+accuracies = []        # 记录验证准确率
+
 start = time.time()
 for iter in range(1, n_iters + 1):
     category, line, category_tensor, line_tensor = randomTrainingExample(category_lines, all_categories)
@@ -46,8 +49,14 @@ for iter in range(1, n_iters + 1):
         all_losses.append(current_loss / plot_every)
         current_loss = 0
 
-# 绘制损失曲线
+    if iter % accuracy_every == 0:
+        acc = evaluate_accuracy_lstm(lstm, category_lines, all_categories)
+        accuracies.append(acc)
+
+# 绘图
 plot_loss(all_losses)
+plot_accuracy(accuracies, accuracy_every)
+
 
 # 混淆矩阵评估
 confusion = torch.zeros(n_categories, n_categories)
